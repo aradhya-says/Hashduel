@@ -9,11 +9,21 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@creit.tech/stellar-wallets-kit": "^2.5.0",
     "@stellar/freighter-api": "^6.0.1",
     "@stellar/stellar-sdk": "^16.2.0",
+    "@tanstack/react-query": "^5.101.4",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "contract": "file:packages/contract",
+    "lucide-react": "^1.33.0",
     "next": "16.2.6",
+    "next-themes": "^0.4.6",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "sonner": "^2.0.8",
+    "tailwind-merge": "^3.6.0",
+    "zustand": "^5.0.15"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Bytes, BytesN, Env};
+use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, token, Address, Bytes, BytesN, Env};
 
 #[contracttype]
 pub enum DataKey {
@@ -7,6 +7,9 @@ pub enum DataKey {
     NextId,
 }
 
+/// Open = waiting for player 2 to join.
+/// Committed = both players committed, revealing moves.
+/// Resolved = finished (win / draw / forfeit / cancel).
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Status {
@@ -34,29 +37,40 @@ pub struct Game {
 #[contract]
 pub struct Contract;
 
-fn resolve(env: &Env, game: &mut Game) {
+/// Transfer the pot according to both revealed moves.
+/// Moves: 0 = Rock, 1 = Paper, 2 = Scissors.
+fn resolve(env: &Env, game_id: u64, game: &mut Game) {
     let m1 = game.move1.unwrap();
     let m2 = game.move2.unwrap();
     let tc = token::Client::new(env, &game.token);
     let addr = env.current_contract_address();
     if m1 == m2 {
-        // Draw — refund both
+        // Draw — refund both wagers
         tc.transfer(&addr, &game.player1, &game.wager);
         tc.transfer(&addr, game.player2.as_ref().unwrap(), &game.wager);
+        env.events()
+            .publish((symbol_short!("resolved"),), (game_id, Option::<Address>::None));
     } else if (m1 + 1) % 3 == m2 {
-        // Player2 wins
-        tc.transfer(&addr, game.player2.as_ref().unwrap(), &(game.wager * 2));
+        // Player2 wins: paper>rock, scissors>paper, rock>scissors
+        let p2 = game.player2.as_ref().unwrap().clone();
+        tc.transfer(&addr, &p2, &(game.wager * 2));
+        env.events()
+            .publish((symbol_short!("resolved"),), (game_id, Some(p2)));
     } else {
         // Player1 wins
-        tc.transfer(&addr, &game.player1, &(game.wager * 2));
+        let p1 = game.player1.clone();
+        tc.transfer(&addr, &p1, &(game.wager * 2));
+        env.events()
+            .publish((symbol_short!("resolved"),), (game_id, Some(p1)));
     }
     game.status = Status::Resolved;
 }
 
 #[contractimpl]
 impl Contract {
-    /// Create a new RPS game. Player1 locks their wager and submits a commit hash.
-    /// Returns the game_id.
+    /// Create a new RPS game. Player1 locks their wager and submits a commit
+    /// hash of their secret move. Returns the game_id.
+    /// `timeout` is the reveal window in seconds (also applies to joining).
     pub fn create_game(
         env: Env,
         player: Address,
@@ -67,12 +81,13 @@ impl Contract {
     ) -> u64 {
         player.require_auth();
         assert!(wager > 0, "wager must be positive");
+        assert!(timeout > 0, "timeout must be positive");
         token::Client::new(&env, &token).transfer(&player, &env.current_contract_address(), &wager);
         let id: u64 = env.storage().instance().get(&DataKey::NextId).unwrap_or(0);
         env.storage().persistent().set(
             &DataKey::Game(id),
             &Game {
-                player1: player,
+                player1: player.clone(),
                 player2: None,
                 wager,
                 token,
@@ -86,10 +101,13 @@ impl Contract {
             },
         );
         env.storage().instance().set(&DataKey::NextId, &(id + 1));
+        env.events()
+            .publish((symbol_short!("created"),), (id, player, wager));
         id
     }
 
-    /// Join an open game. Player2 locks a matching wager and submits their commit hash.
+    /// Join an open game. Player2 locks a matching wager and submits their
+    /// own commit hash. The reveal deadline starts ticking from here.
     pub fn join_game(env: Env, player: Address, game_id: u64, commit: BytesN<32>) {
         player.require_auth();
         let mut game: Game = env
@@ -105,15 +123,18 @@ impl Contract {
         );
         token::Client::new(&env, &game.token)
             .transfer(&player, &env.current_contract_address(), &game.wager);
-        game.player2 = Some(player);
+        game.player2 = Some(player.clone());
         game.commit2 = Some(commit);
         game.status = Status::Committed;
         game.deadline = env.ledger().timestamp() + game.timeout;
         env.storage().persistent().set(&DataKey::Game(game_id), &game);
+        env.events()
+            .publish((symbol_short!("joined"),), (game_id, player));
     }
 
-    /// Reveal your move+salt. Contract verifies SHA-256(move||salt) == commit.
-    /// Auto-resolves when both players have revealed.
+    /// Reveal your move+salt. Contract verifies SHA-256(move||salt) == commit,
+    /// so only the pre-committed move is accepted. Auto-resolves the game and
+    /// pays out the pot when both moves are on the table.
     pub fn reveal_move(env: Env, player: Address, game_id: u64, mv: u32, salt: Bytes) {
         player.require_auth();
         assert!(mv <= 2, "invalid move");
@@ -131,7 +152,7 @@ impl Contract {
         let is_p2 = game.player2.as_ref() == Some(&player);
         assert!(is_p1 || is_p2, "not a player");
 
-        // Verify commit hash
+        // Verify commit hash: sha256(move_byte || salt)
         let mut preimage = Bytes::from_array(&env, &[mv as u8]);
         preimage.append(&salt);
         let hash: BytesN<32> = env.crypto().sha256(&preimage).into();
@@ -146,13 +167,17 @@ impl Contract {
             game.move2 = Some(mv);
         }
 
+        env.events()
+            .publish((symbol_short!("revealed"),), (game_id, player, mv));
+
         if game.move1.is_some() && game.move2.is_some() {
-            resolve(&env, &mut game);
+            resolve(&env, game_id, &mut game);
         }
         env.storage().persistent().set(&DataKey::Game(game_id), &game);
     }
 
-    /// If the opponent didn't reveal after the deadline, claim the full pot.
+    /// Timeout forfeit: if the opponent failed to reveal before the deadline
+    /// while you did, claim the entire pot.
     pub fn claim_timeout(env: Env, game_id: u64, player: Address) {
         player.require_auth();
         let mut game: Game = env
@@ -187,9 +212,12 @@ impl Contract {
             .transfer(&env.current_contract_address(), &player, &pot);
         game.status = Status::Resolved;
         env.storage().persistent().set(&DataKey::Game(game_id), &game);
+        env.events()
+            .publish((symbol_short!("forfeit"),), (game_id, player));
     }
 
-    /// Cancel an open game before anyone joins. Only the creator can cancel after the deadline.
+    /// Cancel an un-joined game after its join window lapsed. Refunds the
+    /// creator's locked wager. Only the creator can call this.
     pub fn cancel_game(env: Env, game_id: u64, player: Address) {
         player.require_auth();
         let mut game: Game = env
@@ -207,9 +235,11 @@ impl Contract {
             .transfer(&env.current_contract_address(), &player, &game.wager);
         game.status = Status::Resolved;
         env.storage().persistent().set(&DataKey::Game(game_id), &game);
+        env.events()
+            .publish((symbol_short!("cancelled"),), (game_id, player));
     }
 
-    /// Read-only: get full game state.
+    /// Read-only: full game state.
     pub fn get_game(env: Env, game_id: u64) -> Game {
         env.storage()
             .persistent()

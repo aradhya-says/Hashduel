@@ -3,6 +3,8 @@ import {
   TransactionBuilder,
   Contract,
   Address,
+  Account,
+  Keypair,
   nativeToScVal,
   scValToNative,
   xdr,
@@ -71,6 +73,15 @@ export function toScValBytesRaw(data: Uint8Array) {
   return nativeToScVal(data, { type: "bytes" });
 }
 
+// ── Standalone source account for read-only simulations ──
+// Contract addresses (C...) are NOT accounts on Horizon, so we must use
+// a synthetic account for simulateTransaction.
+const readOnlyKeypair = Keypair.random();
+const readOnlyAccount = new Account(
+  readOnlyKeypair.publicKey(),
+  "0"
+);
+
 // ── Contract Read ──
 export async function readContract(
   contractId: string,
@@ -78,8 +89,7 @@ export async function readContract(
   args: xdr.ScVal[] = []
 ): Promise<unknown> {
   const contract = new Contract(contractId);
-  const account = await server.getAccount(contractId);
-  const tx = new TransactionBuilder(account, {
+  const tx = new TransactionBuilder(readOnlyAccount, {
     fee: "100",
     networkPassphrase: NETWORK_PASSPHRASE,
   })
@@ -94,12 +104,17 @@ export async function readContract(
 }
 
 // ── Contract Write ──
+export interface WriteResult {
+  hash: string;
+  returnValue?: unknown;
+}
+
 export async function writeContract(
   contractId: string,
   method: string,
   args: xdr.ScVal[],
   source: string
-): Promise<string> {
+): Promise<WriteResult> {
   const contract = new Contract(contractId);
   const account = await server.getAccount(source);
   const tx = new TransactionBuilder(account, {
@@ -111,10 +126,13 @@ export async function writeContract(
     .build();
   const sim = await server.simulateTransaction(tx);
   if ("error" in sim) throw new Error(String(sim.error));
-  const assembled = rpc.assembleTransaction(
-    tx,
-    sim as rpc.Api.SimulateTransactionSuccessResponse
-  ).build();
+  const simSuccess = sim as rpc.Api.SimulateTransactionSuccessResponse;
+
+  // Capture the simulation return value (e.g. game ID from create_game)
+  const retval = simSuccess.result?.retval;
+  const returnValue = retval ? scValToNative(retval) : undefined;
+
+  const assembled = rpc.assembleTransaction(tx, simSuccess).build();
   const { signedTxXdr } = await freighterSign(assembled.toXDR(), {
     networkPassphrase: NETWORK_PASSPHRASE,
   });
@@ -130,7 +148,7 @@ export async function writeContract(
         if (txResult.status === "FAILED") {
           throw new Error("Transaction failed on-chain");
         }
-        return result.hash;
+        return { hash: result.hash, returnValue };
       }
     }
   }

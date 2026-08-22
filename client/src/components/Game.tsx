@@ -102,6 +102,9 @@ export default function Game() {
   const [rSalt, setRSalt] = useState("");
   const [rLoading, setRLoading] = useState(false);
 
+  const [ctLoading, setCTLoading] = useState(false);
+  const [cvLoading, setCVLoading] = useState(false);
+
   const [toast, setToast] = useState<{
     msg: string;
     kind: "ok" | "err";
@@ -156,7 +159,6 @@ export default function Game() {
     try {
       const { gameId } = await createGame(
         cWager,
-        "CDLZFC3SYJ6D5T5BBKVFRQPLDIISEL5BFRL5KZTBW3G5XJZVIKU5ESGS",
         cMove,
         parseInt(cTimeout) || 3600
       );
@@ -204,22 +206,28 @@ export default function Game() {
   };
 
   const handleClaimTimeout = async () => {
+    setCTLoading(true);
     try {
       await claimTimeout(parseInt(lookupId));
       showToast("Timeout claimed! Pot transferred.");
       await refreshGame();
     } catch (e: unknown) {
       showToast(String(e), "err");
+    } finally {
+      setCTLoading(false);
     }
   };
 
   const handleCancel = async () => {
+    setCVLoading(true);
     try {
       await cancelGame(parseInt(lookupId));
       showToast("Game cancelled, wager returned.");
       await refreshGame();
     } catch (e: unknown) {
       showToast(String(e), "err");
+    } finally {
+      setCVLoading(false);
     }
   };
 
@@ -230,10 +238,10 @@ export default function Game() {
   }, [game?.status, refreshGame]);
 
   const myAddr = wallet ?? "";
-  const isP1 = game?.player1 === myAddr;
-  const isP2 = game?.player2 === myAddr;
-  const myRevealed = isP1 ? game?.move1 != null : game?.move2 != null;
-  const theirRevealed = isP1 ? game?.move2 != null : game?.move1 != null;
+  const isP1 = !!wallet && game?.player1 === myAddr;
+  const isP2 = !!wallet && game?.player2 === myAddr;
+  const myRevealed = !wallet ? false : isP1 ? game?.move1 != null : game?.move2 != null;
+  const theirRevealed = !wallet ? false : isP1 ? game?.move2 != null : game?.move1 != null;
   const deadlinePassed = game ? isDeadlinePassed(game.deadline) : false;
 
   return (
@@ -438,9 +446,10 @@ export default function Game() {
                     <div className="border-t border-gray-800 pt-6">
                       <button
                         onClick={handleCancel}
-                        className="w-full rounded-lg bg-red-600/80 py-3 text-sm font-bold transition-colors hover:bg-red-500"
+                        disabled={cvLoading}
+                        className="w-full rounded-lg bg-red-600/80 py-3 text-sm font-bold transition-colors hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        Cancel & Refund (timeout)
+                        {cvLoading ? "Cancelling..." : "Cancel & Refund (timeout)"}
                       </button>
                     </div>
                   )}
@@ -499,9 +508,10 @@ export default function Game() {
                     {deadlinePassed && !theirRevealed && myRevealed && (
                       <button
                         onClick={handleClaimTimeout}
-                        className="mt-4 w-full rounded-lg bg-orange-600 py-3 text-sm font-bold transition-colors hover:bg-orange-500"
+                        disabled={ctLoading}
+                        className="mt-4 w-full rounded-lg bg-orange-600 py-3 text-sm font-bold transition-colors hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        Claim Win (opponent timed out)
+                        {ctLoading ? "Claiming..." : "Claim Win (opponent timed out)"}
                       </button>
                     )}
                   </div>

@@ -1,5 +1,6 @@
 "use client";
 
+import { networks, type Game as RawGame, type Status } from "contract";
 import {
   readContract,
   writeContract,
@@ -12,10 +13,15 @@ import {
   ensureWalletConnected,
 } from "@/lib/stellar";
 
-// ── Update this after deploying the contract ──
-export const CONTRACT_ADDRESS =
-  process.env.NEXT_PUBLIC_CONTRACT_ADDRESS ?? "";
+// ── Contract config ──
+export const CONTRACT_ADDRESS = networks.testnet.contractId;
 
+// Token address for wagers — USDC on testnet by default, configurable via env
+export const TOKEN_ADDRESS =
+  process.env.NEXT_PUBLIC_TOKEN_ADDRESS ??
+  "CDLZFC3SYJ6D5T5BBKVFRQPLDIISEL5BFRL5KZTBW3G5XJZVIKU5ESGS";
+
+// ── Game interface (used by Game.tsx) ──
 const STATUS_MAP = ["Open", "Committed", "Resolved"] as const;
 export type GameStatus = (typeof STATUS_MAP)[number];
 
@@ -31,6 +37,13 @@ export interface Game {
   status: GameStatus;
   deadline: bigint;
   timeout: bigint;
+}
+
+// ── Convert generated Status type to string ──
+function statusToString(s: Status): GameStatus {
+  if (s.tag === "Open") return "Open";
+  if (s.tag === "Committed") return "Committed";
+  return "Resolved";
 }
 
 // ── Crypto ──
@@ -78,14 +91,37 @@ function toBigInt(v: unknown): bigint {
 
 function toHex(v: unknown): string {
   if (!v) return "";
-  if (v instanceof Uint8Array) return Buffer.from(v).toString("hex");
+  if (v instanceof Uint8Array || Buffer.isBuffer(v))
+    return Buffer.from(v).toString("hex");
   if (typeof v === "string") return v;
   return "";
 }
 
+function parseGameStatus(raw: unknown): GameStatus {
+  // Handle generated Status object {tag: "Open"}
+  if (raw && typeof raw === "object" && "tag" in raw) {
+    return statusToString(raw as Status);
+  }
+  // Handle numeric variant index
+  if (typeof raw === "number") return STATUS_MAP[raw] ?? "Open";
+  // Handle string
+  if (typeof raw === "string") {
+    const found = STATUS_MAP.find(
+      (s) => s.toLowerCase() === raw.toLowerCase()
+    );
+    if (found) return found;
+  }
+  // Handle object with numeric key
+  if (raw && typeof raw === "object") {
+    const obj = raw as Record<string, unknown>;
+    const idx = Number(Object.values(obj)[0]);
+    if (!isNaN(idx) && idx >= 0 && idx < STATUS_MAP.length)
+      return STATUS_MAP[idx];
+  }
+  return "Open";
+}
+
 function parseGame(raw: Record<string, unknown>): Game {
-  const statusIdx =
-    typeof raw.status === "number" ? raw.status : Number(raw.status ?? 0);
   return {
     player1: String(raw.player1 ?? ""),
     player2: raw.player2 ? String(raw.player2) : null,
@@ -95,7 +131,7 @@ function parseGame(raw: Record<string, unknown>): Game {
     commit2: raw.commit2 ? toHex(raw.commit2) : null,
     move1: raw.move1 != null ? Number(raw.move1) : null,
     move2: raw.move2 != null ? Number(raw.move2) : null,
-    status: STATUS_MAP[statusIdx] ?? "Open",
+    status: parseGameStatus(raw.status),
     deadline: toBigInt(raw.deadline),
     timeout: toBigInt(raw.timeout),
   };
@@ -111,7 +147,6 @@ export async function getGame(gameId: number): Promise<Game> {
 
 export async function createGame(
   wager: string,
-  token: string,
   move: number,
   timeoutSecs: number
 ): Promise<{ gameId: number; hash: string; salt: Uint8Array }> {
@@ -122,28 +157,20 @@ export async function createGame(
   const args = [
     toScValAddress(player),
     toScValI128(wager),
-    toScValAddress(token),
+    toScValAddress(TOKEN_ADDRESS),
     toScValBytes(hash),
     toScValU64(BigInt(timeoutSecs)),
   ];
-  await writeContract(CONTRACT_ADDRESS, "create_game", args, player);
+  const { hash: txHash, returnValue } = await writeContract(
+    CONTRACT_ADDRESS,
+    "create_game",
+    args,
+    player
+  );
 
-  // Find the game we just created by scanning backwards
-  let gameId = 0;
-  for (let i = 0; i < 200; i++) {
-    try {
-      const g = await getGame(i);
-      if (g.player1 === player && g.status === "Open" && g.wager === toBigInt(wager)) {
-        gameId = i;
-        break;
-      }
-    } catch {
-      break;
-    }
-  }
-
+  const gameId = Number(returnValue ?? 0);
   storeSecret(gameId, move, salt);
-  return { gameId, hash, salt };
+  return { gameId, hash: txHash, salt };
 }
 
 export async function joinGame(
@@ -159,9 +186,14 @@ export async function joinGame(
     toScValU64(gameId),
     toScValBytes(hash),
   ];
-  await writeContract(CONTRACT_ADDRESS, "join_game", args, player);
+  const { hash: txHash } = await writeContract(
+    CONTRACT_ADDRESS,
+    "join_game",
+    args,
+    player
+  );
   storeSecret(gameId, move, salt);
-  return { hash, salt };
+  return { hash: txHash, salt };
 }
 
 export async function revealMove(

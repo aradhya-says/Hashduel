@@ -1,6 +1,6 @@
 #![cfg(test)]
 use super::*;
-use soroban_sdk::{testutils::Address as _, testutils::Ledger, Address, Bytes, BytesN, Env};
+use soroban_sdk::{testutils::Address as _, testutils::Events, testutils::Ledger, Address, Bytes, Env};
 
 // ── Minimal mock token for wager testing ──
 mod mock_token {
@@ -57,7 +57,7 @@ fn make_commit(env: &Env, mv: u32, salt: &[u8]) -> BytesN<32> {
     env.crypto().sha256(&preimage).into()
 }
 
-// ── Tests ──
+// ── Happy paths ──
 #[test]
 fn test_create_and_join() {
     let (env, token_addr, token, p1, p2) = setup();
@@ -136,24 +136,88 @@ fn test_draw_refund() {
 }
 
 #[test]
-#[should_panic(expected = "invalid reveal")]
-fn test_wrong_salt_panics() {
+fn test_events_emitted() {
+    let (env, token_addr, _token, p1, p2) = setup();
+    let cid = env.register(Contract, ());
+    let client = ContractClient::new(&env, &cid);
+
+    let commit1 = make_commit(&env, 0, &[1]);
+    let commit2 = make_commit(&env, 2, &[2]);
+    let gid = client.create_game(&p1, &100, &token_addr, &commit1, &500);
+    // created
+    assert_eq!(env.events().all().events().len(), 1);
+
+    client.join_game(&p2, &gid, &commit2);
+    // joined
+    assert_eq!(env.events().all().events().len(), 1);
+
+    client.reveal_move(&p1, &gid, &0, &Bytes::from_array(&env, &[1]));
+    // revealed
+    assert_eq!(env.events().all().events().len(), 1);
+
+    client.reveal_move(&p2, &gid, &2, &Bytes::from_array(&env, &[2]));
+    // revealed + resolved
+    let events = env.events().all();
+    assert_eq!(events.events().len(), 2);
+}
+
+#[test]
+fn test_multiple_games_sequential_ids() {
+    let (env, token_addr, _, p1, _p2) = setup();
+    let cid = env.register(Contract, ());
+    let client = ContractClient::new(&env, &cid);
+
+    let c1 = make_commit(&env, 0, &[1]);
+    let c2 = make_commit(&env, 1, &[2]);
+    let g1 = client.create_game(&p1, &100, &token_addr, &c1, &500);
+    let g2 = client.create_game(&p1, &200, &token_addr, &c2, &500);
+    assert_eq!(g1, 0);
+    assert_eq!(g2, 1);
+}
+
+// ── Timeout forfeit ──
+#[test]
+fn test_claim_timeout_p1_reveals_p2_quits() {
+    let (env, token_addr, token, p1, p2) = setup();
+    let cid = env.register(Contract, ());
+    let client = ContractClient::new(&env, &cid);
+
+    let commit1 = make_commit(&env, 0, &[1]);
+    let commit2 = make_commit(&env, 2, &[2]);
+    let gid = client.create_game(&p1, &100, &token_addr, &commit1, &500);
+    client.join_game(&p2, &gid, &commit2);
+
+    // p1 reveals, p2 doesn't
+    client.reveal_move(&p1, &gid, &0, &Bytes::from_array(&env, &[1]));
+
+    // Advance past reveal deadline (set at join = 0 + 500 = 500)
+    env.ledger().set_timestamp(501);
+    client.claim_timeout(&gid, &p1);
+
+    assert_eq!(token.balance(&p1), 10_100); // 10000 - 100 + 200
+    assert_eq!(token.balance(&p2), 9_900); // 10000 - 100
+    assert_eq!(client.get_game(&gid).status, Status::Resolved);
+}
+
+#[test]
+#[should_panic(expected = "deadline not passed")]
+fn test_claim_timeout_before_deadline_panics() {
     let (env, token_addr, _, p1, p2) = setup();
     let cid = env.register(Contract, ());
     let client = ContractClient::new(&env, &cid);
 
-    let commit1 = make_commit(&env, 0, &[1, 2, 3]);
-    let commit2 = make_commit(&env, 2, &[4, 5, 6]);
+    let commit1 = make_commit(&env, 0, &[1]);
+    let commit2 = make_commit(&env, 2, &[2]);
     let gid = client.create_game(&p1, &100, &token_addr, &commit1, &500);
     client.join_game(&p2, &gid, &commit2);
-
-    // Wrong salt!
-    client.reveal_move(&p1, &gid, &0, &Bytes::from_array(&env, &[9, 9, 9]));
+    client.reveal_move(&p1, &gid, &0, &Bytes::from_array(&env, &[1]));
+    // No time advance — claim must fail
+    client.claim_timeout(&gid, &p1);
 }
 
 #[test]
-#[should_panic(expected = "not in commit phase")]
-fn test_double_reveal_panics() {
+#[should_panic(expected = "you haven't revealed")]
+fn test_claim_without_revealing_panics() {
     let (env, token_addr, _, p1, p2) = setup();
     let cid = env.register(Contract, ());
     let client = ContractClient::new(&env, &cid);
@@ -163,12 +227,12 @@ fn test_double_reveal_panics() {
     let gid = client.create_game(&p1, &100, &token_addr, &commit1, &500);
     client.join_game(&p2, &gid, &commit2);
 
-    client.reveal_move(&p1, &gid, &0, &Bytes::from_array(&env, &[1]));
-    client.reveal_move(&p2, &gid, &2, &Bytes::from_array(&env, &[2]));
-    // Game resolved, reveal_move for p1 again should panic
-    client.reveal_move(&p1, &gid, &0, &Bytes::from_array(&env, &[1]));
+    env.ledger().set_timestamp(501);
+    // Neither player revealed — nobody can snipe the pot
+    client.claim_timeout(&gid, &p1);
 }
 
+// ── Cancel ──
 #[test]
 fn test_cancel_game_before_join() {
     let (env, token_addr, token, p1, _p2) = setup();
@@ -200,9 +264,27 @@ fn test_cancel_before_deadline_panics() {
     client.cancel_game(&gid, &p1);
 }
 
+// ── Failure modes ──
 #[test]
-fn test_claim_timeout_p1_reveals_p2_quits() {
-    let (env, token_addr, token, p1, p2) = setup();
+#[should_panic(expected = "invalid reveal")]
+fn test_wrong_salt_panics() {
+    let (env, token_addr, _, p1, p2) = setup();
+    let cid = env.register(Contract, ());
+    let client = ContractClient::new(&env, &cid);
+
+    let commit1 = make_commit(&env, 0, &[1, 2, 3]);
+    let commit2 = make_commit(&env, 2, &[4, 5, 6]);
+    let gid = client.create_game(&p1, &100, &token_addr, &commit1, &500);
+    client.join_game(&p2, &gid, &commit2);
+
+    // Wrong salt!
+    client.reveal_move(&p1, &gid, &0, &Bytes::from_array(&env, &[9, 9, 9]));
+}
+
+#[test]
+#[should_panic(expected = "not in commit phase")]
+fn test_double_reveal_panics() {
+    let (env, token_addr, _, p1, p2) = setup();
     let cid = env.register(Contract, ());
     let client = ContractClient::new(&env, &cid);
 
@@ -211,16 +293,10 @@ fn test_claim_timeout_p1_reveals_p2_quits() {
     let gid = client.create_game(&p1, &100, &token_addr, &commit1, &500);
     client.join_game(&p2, &gid, &commit2);
 
-    // p1 reveals, p2 doesn't
     client.reveal_move(&p1, &gid, &0, &Bytes::from_array(&env, &[1]));
-
-    // Advance past reveal deadline (set at join = 0 + 500 = 500)
-    env.ledger().set_timestamp(501);
-    client.claim_timeout(&gid, &p1);
-
-    assert_eq!(token.balance(&p1), 10_100); // 10000 - 100 + 200
-    assert_eq!(token.balance(&p2), 9_900); // 10000 - 100
-    assert_eq!(client.get_game(&gid).status, Status::Resolved);
+    client.reveal_move(&p2, &gid, &2, &Bytes::from_array(&env, &[2]));
+    // Game resolved, reveal_move again should panic
+    client.reveal_move(&p1, &gid, &0, &Bytes::from_array(&env, &[1]));
 }
 
 #[test]
@@ -239,7 +315,7 @@ fn test_claim_timeout_both_revealed_panics() {
     client.reveal_move(&p2, &gid, &2, &Bytes::from_array(&env, &[2]));
 
     env.ledger().set_timestamp(501);
-    // Both revealed — game already resolved via auto-resolve
+    // Both revealed — game already auto-resolved
     client.claim_timeout(&gid, &p1);
 }
 
@@ -260,15 +336,29 @@ fn test_random_account_cannot_reveal() {
 }
 
 #[test]
-fn test_multiple_games_sequential_ids() {
-    let (env, token_addr, _, p1, _p2) = setup();
+#[should_panic(expected = "cannot play yourself")]
+fn test_self_join_panics() {
+    let (env, token_addr, _, p1, _) = setup();
     let cid = env.register(Contract, ());
     let client = ContractClient::new(&env, &cid);
 
-    let c1 = make_commit(&env, 0, &[1]);
-    let c2 = make_commit(&env, 1, &[2]);
-    let g1 = client.create_game(&p1, &100, &token_addr, &c1, &500);
-    let g2 = client.create_game(&p1, &200, &token_addr, &c2, &500);
-    assert_eq!(g1, 0);
-    assert_eq!(g2, 1);
+    let commit1 = make_commit(&env, 0, &[1]);
+    let gid = client.create_game(&p1, &100, &token_addr, &commit1, &500);
+    let commit2 = make_commit(&env, 2, &[2]);
+    client.join_game(&p1, &gid, &commit2);
+}
+
+#[test]
+#[should_panic(expected = "invalid move")]
+fn test_invalid_move_panics() {
+    let (env, token_addr, _, p1, p2) = setup();
+    let cid = env.register(Contract, ());
+    let client = ContractClient::new(&env, &cid);
+
+    let commit1 = make_commit(&env, 0, &[1]);
+    let commit2 = make_commit(&env, 2, &[2]);
+    let gid = client.create_game(&p1, &100, &token_addr, &commit1, &500);
+    client.join_game(&p2, &gid, &commit2);
+
+    client.reveal_move(&p1, &gid, &7, &Bytes::from_array(&env, &[1]));
 }
