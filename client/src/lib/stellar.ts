@@ -3,6 +3,7 @@ import {
   TransactionBuilder,
   Contract,
   Address,
+  StrKey,
   Account,
   Keypair,
   nativeToScVal,
@@ -47,8 +48,18 @@ export async function getAddressSafe(): Promise<string | null> {
 }
 
 // ── ScVal Converters ──
+export function isValidStellarAddress(addr: string): boolean {
+  return StrKey.isValidEd25519PublicKey(addr) || StrKey.isValidContract(addr);
+}
+
 export function toScValAddress(addr: string) {
-  return nativeToScVal(new Address(addr), {});
+  const value = addr?.trim();
+  if (!value || !isValidStellarAddress(value)) {
+    throw new Error(
+      `Invalid Stellar address: "${value}". Expected a 56-character account key (G...) or contract id (C...).`
+    );
+  }
+  return new Address(value).toScVal();
 }
 
 export function toScValI128(value: bigint | string | number) {
