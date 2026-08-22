@@ -4,9 +4,10 @@
 - Contract: `contract/contracts/contract/src/lib.rs` — commit-reveal RPS with token wagers.
   17/17 tests passing. Methods: `create_game`, `join_game`, `reveal_move` (sha256(move||salt)
   verified), `claim_timeout`, `cancel_game`, `get_game`. Draw refunds both; winner takes pot.
-- ACTIVE deployment (user-provided, 2026-08-22): `CBUU2J4GJKI5XRRP74J3XVSPGQHL32RZQZDDKGE2FVRH2UIBM54ZXF3F`
-  (baked into regenerated bindings as `networks.testnet.contractId`; verified live via RPC probe).
-  Superseded: CDAOWRR7HWZDGIGW6H4PABCYLJASGCDH6LGIQS67XILWR7A72S6M3TYN.
+- ACTIVE deployment (user-provided, 2026-08-22): `CCZ7CDQ56HN3NVRLV2WM7BKYWPWVVN3NTDYWSZIFLOALCTYPTU7KW7L5`
+  (baked into regenerated bindings as `networks.testnet.contractId`; verified live via RPC probe —
+  get_game(0) → WasmVm InvalidAction trap = live; spec matches all 6 RPS methods; client build OK).
+  Superseded: CBUU2J4GJKI5XRRP74J3XVSPGQHL32RZQZDDKGE2FVRH2UIBM54ZXF3F, CDAOWRR7HWZDGIGW6H4PABCYLJASGCDH6LGIQS67XILWR7A72S6M3TYN.
   Old/dead: CDWSGS4RTLJXYOPIFZVVXIZ7UH656QS2APNMF6GEO3EGEM4MRTJ3PJFB (still on-chain, just unused).
 - Liveness probe gotcha: simulating a getter on missing state gives
   `Error(WasmVm, InvalidAction)` (= wasm unreachable from Rust unwrap → contract LIVE);
