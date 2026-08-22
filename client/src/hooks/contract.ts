@@ -1,6 +1,6 @@
 "use client";
 
-import { networks, type Game as RawGame, type Status } from "contract";
+import { type Game as RawGame, type Status } from "contract";
 import {
   readContract,
   writeContract,
@@ -14,7 +14,21 @@ import {
 } from "@/lib/stellar";
 
 // ── Contract config ──
-export const CONTRACT_ADDRESS = networks.testnet.contractId;
+// HashDuel game contract id. Read from the environment only — there is no
+// hardcoded fallback, so a missing/misconfigured value fails loudly instead of
+// silently pointing at a stale deployment.
+export const CONTRACT_ADDRESS =
+  process.env.NEXT_PUBLIC_CONTRACT_ADDRESS?.trim() || "";
+
+function requireContractAddress(): string {
+  if (!CONTRACT_ADDRESS) {
+    throw new Error(
+      "NEXT_PUBLIC_CONTRACT_ADDRESS is not set. Add the HashDuel contract id " +
+        "(a 56-character strkey starting with C) to your environment and reload.",
+    );
+  }
+  return CONTRACT_ADDRESS;
+}
 
 // Token address for wagers — native XLM Stellar Asset Contract on testnet by
 // default, configurable via env. This is the deterministic SAC id derived from
@@ -144,7 +158,7 @@ function parseGame(raw: Record<string, unknown>): Game {
 
 // ── Contract Calls ──
 export async function getGame(gameId: number): Promise<Game> {
-  const raw = (await readContract(CONTRACT_ADDRESS, "get_game", [
+  const raw = (await readContract(requireContractAddress(), "get_game", [
     toScValU64(gameId),
   ])) as Record<string, unknown>;
   return parseGame(raw);
@@ -167,7 +181,7 @@ export async function createGame(
     toScValU64(BigInt(timeoutSecs)),
   ];
   const { hash: txHash, returnValue } = await writeContract(
-    CONTRACT_ADDRESS,
+    requireContractAddress(),
     "create_game",
     args,
     player
@@ -192,7 +206,7 @@ export async function joinGame(
     toScValBytes(hash),
   ];
   const { hash: txHash } = await writeContract(
-    CONTRACT_ADDRESS,
+    requireContractAddress(),
     "join_game",
     args,
     player
@@ -213,13 +227,13 @@ export async function revealMove(
     toScValU32(move),
     toScValBytesRaw(salt),
   ];
-  await writeContract(CONTRACT_ADDRESS, "reveal_move", args, player);
+  await writeContract(requireContractAddress(), "reveal_move", args, player);
 }
 
 export async function claimTimeout(gameId: number): Promise<void> {
   const player = await ensureWalletConnected();
   const args = [toScValU64(gameId), toScValAddress(player)];
-  await writeContract(CONTRACT_ADDRESS, "claim_timeout", args, player);
+  await writeContract(requireContractAddress(), "claim_timeout", args, player);
 }
 
 export async function cancelGame(gameId: number): Promise<void> {
