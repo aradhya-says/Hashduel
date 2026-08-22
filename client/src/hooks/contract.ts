@@ -16,10 +16,15 @@ import {
 // ── Contract config ──
 export const CONTRACT_ADDRESS = networks.testnet.contractId;
 
-// Token address for wagers — USDC on testnet by default, configurable via env
+// Token address for wagers — native XLM Stellar Asset Contract on testnet by
+// default, configurable via env. This is the deterministic SAC id derived from
+// Asset.native() + the testnet passphrase, so it is guaranteed to be a valid
+// contract strkey.
+export const NATIVE_XLM_TESTNET_SAC =
+  "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+
 export const TOKEN_ADDRESS =
-  process.env.NEXT_PUBLIC_TOKEN_ADDRESS ??
-  "CDLZFC3SYJ6D5T5BBKVFRQPLDIISEL5BFRL5KZTBW3G5XJZVIKU5ESGS";
+  process.env.NEXT_PUBLIC_TOKEN_ADDRESS?.trim() || NATIVE_XLM_TESTNET_SAC;
 
 // ── Game interface (used by Game.tsx) ──
 const STATUS_MAP = ["Open", "Committed", "Resolved"] as const;
