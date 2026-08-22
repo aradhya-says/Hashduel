@@ -239,7 +239,7 @@ export async function claimTimeout(gameId: number): Promise<void> {
 export async function cancelGame(gameId: number): Promise<void> {
   const player = await ensureWalletConnected();
   const args = [toScValU64(gameId), toScValAddress(player)];
-  await writeContract(CONTRACT_ADDRESS, "cancel_game", args, player);
+  await writeContract(requireContractAddress(), "cancel_game", args, player);
 }
 
 // ── Helpers ──
