@@ -8,7 +8,7 @@ HashDuel is a decentralized Rock-Paper-Scissors game designed to allow two playe
 
 The game uses a **commit-reveal mechanism** to prevent players from changing their move after seeing their opponent's choice.
 
-### How it works
+### How It Works
 
 1. Player 1 chooses Rock, Paper, or Scissors.
 2. Player 1 creates a cryptographic commitment of their move using a secret value.
@@ -25,7 +25,7 @@ Because the result and fund distribution are handled by the smart contract, the 
 ## Main Features
 
 - Rock-Paper-Scissors gameplay
-- Commit reveal hashing
+- Commit-reveal hashing
 - Trustless winner determination
 - Player wagering
 - Wagering pools
@@ -45,5 +45,77 @@ hashduel/
 ├── frontend/
 │   └── src/
 │       └── components/        # Frontend components
-├── README.md
-└── ...
+└── README.md
+```
+
+## Live Demo
+
+The deployed HashDuel application is available here:
+
+**https://hashduel.vercel.app/**
+
+You can access the application, connect a Web3 wallet, and interact with the deployed interface.
+
+## Screenshots
+
+### 1. Wallet Connected State
+
+Screenshot showing the HashDuel application after successfully connecting a Web3 wallet.
+
+_Add screenshot here._
+
+### 2. Balance Displayed
+
+Screenshot showing the connected wallet balance inside the application.
+
+_Add screenshot here._
+
+### 3. Successful Testnet Transaction
+
+Screenshot showing a successful testnet transaction and the transaction result displayed to the user.
+
+_Add screenshot here._
+
+## Security Model
+
+HashDuel uses a **commit-reveal mechanism** to prevent a player from changing their move after seeing their opponent's choice.
+
+Conceptually, the commitment is generated as:
+
+```text
+commitment = hash(move + secret)
+```
+
+During the reveal phase, the player submits the original move and secret. The smart contract generates the commitment again and compares it with the commitment submitted earlier.
+
+If both values match, the revealed move is considered valid.
+
+## Timeout Forfeits
+
+If a player commits to a game but fails to reveal their move within the allowed time, the timeout mechanism can be used to forfeit the game according to the smart contract rules.
+
+This prevents a player from intentionally avoiding the reveal phase after committing to a match.
+
+## Technology
+
+- Solidity
+- Smart Contracts
+- Web3
+- Cryptographic Hashing
+- JavaScript / TypeScript
+- Git
+- Vercel
+- Ethereum-compatible Testnet
+
+## Future Improvements
+
+- Improved game matchmaking
+- Better game history
+- Enhanced transaction status feedback
+- Additional game statistics
+- Improved UI/UX
+- Support for additional blockchain networks
+
+## License
+
+This project is developed as a blockchain/Web3 project for educational and development purposes.
