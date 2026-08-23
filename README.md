@@ -65,6 +65,7 @@ You can access the application, connect a Web3 wallet, and interact with the dep
 | Language | Rust (`#![no_std]`, compiled to WASM) |
 | SDK | soroban-sdk v23 |
 | Testnet WASM Hash | `f458e8040e8f3417fa6e59d640175ef63a5f386dcec64afeeaefe2e992b143a8` |
+| contact address | `CCGWFRNQUY56EMVQHV4O523V6JKNL7GCJONOGRVYICWQZRMOC7DPK6YY` |
 | Network | Stellar Testnet (Soroban RPC) |
 
 ## Screenshots
